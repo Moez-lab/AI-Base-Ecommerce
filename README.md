@@ -14,6 +14,11 @@ Smart Shop AI is an intelligent e-commerce platform that leverages Large Languag
 - **📊 Real-time Analytics Pipeline**: Tracks user interactions (Product Views, Clicks, Add to Cart, Session Start) using **Apache Kafka** and processes them into a **PostgreSQL Data Warehouse**.
 - **⚡ Modern Tech Stack**: Built with Node.js, Express, React, and Docker.
 
+## 📸 Screenshots
+
+![Smart Shop AI Home](./frontend/public/images/screenshot1.png)
+![Smart Shop AI Recommendations](./frontend/public/images/screenshot2.png)
+
 ## 🛠️ Tech Stack
 
 - **Frontend**: React, Vite, Tailwind CSS, Lucide Icons.

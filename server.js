@@ -12,12 +12,30 @@ const {
   getSimilarProducts
 } = require('./utils/recommendation-engine');
 
+// LangChain imports
+const { ChatGroq } = require("@langchain/groq");
+const { ChatPromptTemplate, MessagesPlaceholder } = require("@langchain/core/prompts");
+const { RunnableWithMessageHistory } = require("@langchain/core/runnables");
+const { InMemoryChatMessageHistory } = require("@langchain/core/chat_history");
+
+// In-memory chat history storage (mapped by sessionId)
+const chatHistories = {};
+
+const getMessageHistory = (sessionId) => {
+  if (chatHistories[sessionId] === undefined) {
+    chatHistories[sessionId] = new InMemoryChatMessageHistory();
+  }
+  return chatHistories[sessionId];
+};
+
 const app = express();
 const PORT = 3000;
 
-// Initialize Groq
-const groq = new Groq({
+// Initialize LangChain ChatGroq
+const chatModel = new ChatGroq({
   apiKey: process.env.GROQ_API_KEY,
+  model: "llama-3.3-70b-versatile",
+  temperature: 0.7,
 });
 
 // Initialize Prisma
@@ -224,24 +242,43 @@ Guidelines:
 - If asked about products not in the context, politely say you don't have that information
 - Suggest related products when appropriate
 - Format prices with dollar signs
-${productContext}`;
+{productContext}`;
 
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userMessage }
-      ],
-      temperature: 0.7,
-      max_tokens: 500
+    // Define the LangChain prompt template
+    const prompt = ChatPromptTemplate.fromMessages([
+      ["system", SYSTEM_PROMPT],
+      new MessagesPlaceholder("history"),
+      ["human", "{input}"]
+    ]);
+
+    // Create the runnable chain
+    const chain = prompt.pipe(chatModel);
+
+    // Wrap the chain with message history
+    const chainWithHistory = new RunnableWithMessageHistory({
+      runnable: chain,
+      getMessageHistory: getMessageHistory,
+      inputMessagesKey: "input",
+      historyMessagesKey: "history",
     });
 
-    const reply = completion.choices[0]?.message?.content || "No response";
+    const sessionId = req.headers['x-session-id'] || generateEventId();
+    
+    // Execute the chain with the session history
+    const response = await chainWithHistory.invoke(
+      {
+        input: userMessage,
+        productContext: productContext // Passing contextual variables
+      },
+      { configurable: { sessionId } }
+    );
+
+    const reply = response.content || "No response";
 
     // Track chat event to Kafka (async, non-blocking)
     const chatEvent = createChatEvent({
       userId: req.headers['x-user-id'] || 'anonymous',
-      sessionId: req.headers['x-session-id'] || generateEventId(),
+      sessionId: sessionId,
       message: userMessage,
       response: reply,
       productsReturned: relevantProducts.map(p => p.id),

@@ -1,7 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MessageCircle, X, Send, Bot, Sparkles } from 'lucide-react';
+import { MessageCircle, X, Send, Bot, Sparkles, ShoppingCart } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+import parse from 'html-react-parser';
+import { useCart } from '../context/CartContext';
 
 const ChatWidget = ({ userId, sessionId }) => {
+    const { addToCart } = useCart();
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState([
         { type: 'bot', text: "Hi! I'm your shopping assistant. Looking for something specific today?" }
@@ -54,7 +60,7 @@ const ChatWidget = ({ userId, sessionId }) => {
 
             setMessages(prev => [
                 ...prev,
-                { type: 'bot', text: data.response }
+                { type: 'bot', text: data.response, products: data.products }
             ]);
 
         } catch (error) {
@@ -91,7 +97,39 @@ const ChatWidget = ({ userId, sessionId }) => {
                     {messages.map((msg, idx) => (
                         <div key={idx} className={`message ${msg.type}-message`}>
                             <div className="message-content">
-                                <p>{msg.text}</p>
+                                <div className="markdown-content">
+                                    {msg.type === 'bot' ? parse(DOMPurify.sanitize(marked.parse(msg.text || ''))) : msg.text}
+                                </div>
+                                {msg.products && msg.products.length > 0 && (
+                                    <div className="chat-products-container">
+                                        {msg.products.map(product => (
+                                            <div key={product.id || product.productId} className="chat-product-card">
+                                                <Link to={`/product/${product.id || product.productId}`} className="product-link" style={{ textDecoration: 'none', color: 'inherit', display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                                    <img
+                                                        src={product.imageUrl}
+                                                        alt={product.name}
+                                                        className="chat-product-img"
+                                                        onError={(e) => e.target.src = 'https://via.placeholder.com/100'}
+                                                    />
+                                                    <div className="chat-product-details">
+                                                        <h5>{product.name}</h5>
+                                                        <span className="price">${Number(product.price).toFixed(2)}</span>
+                                                        <button
+                                                            className="chat-add-btn"
+                                                            onClick={(e) => {
+                                                                e.preventDefault();
+                                                                e.stopPropagation();
+                                                                addToCart(product);
+                                                            }}
+                                                        >
+                                                            <ShoppingCart size={14} /> Add
+                                                        </button>
+                                                    </div>
+                                                </Link>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     ))}

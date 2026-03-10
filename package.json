@@ -35,7 +35,8 @@
     "langsmith": "^0.5.4",
     "openai": "^6.17.0",
     "pg": "^8.11.3",
-    "redis": "^4.6.12"
+    "redis": "^4.6.12",
+    "stopword": "^3.1.5"
   },
   "devDependencies": {
     "prisma": "^5.22.0"

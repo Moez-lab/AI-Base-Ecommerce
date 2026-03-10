@@ -1,4 +1,5 @@
 const express = require('express');
+const { removeStopwords, eng } = require('stopword');
 const Groq = require('groq-sdk');
 const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
@@ -36,6 +37,40 @@ const chatModel = new ChatGroq({
   apiKey: process.env.GROQ_API_KEY,
   model: "llama-3.3-70b-versatile",
   temperature: 0.7,
+  maxTokens: 512,   // cap output length for faster responses
+});
+
+// removeStopwords (from 'stopword' package) handles filtering —
+// same curated English list as Elasticsearch/Algolia, no manual set needed
+
+// ── Build LangChain prompt + chain ONCE at startup (avoids per-request overhead) ──
+const SYSTEM_PROMPT_TEMPLATE = `You are an AI shopping assistant for an e-commerce website.
+Your role is to help customers find products, answer questions about products, and provide recommendations.
+
+Guidelines:
+- Be friendly, helpful, and concise
+- If product information is available in the context, use it to answer questions
+- Provide specific product names, prices, and details when relevant
+- If asked about products not in the context, politely say you don't have that information
+- Suggest related products when appropriate
+- Format prices with dollar signs
+{productContext}`;
+
+const chatPrompt = ChatPromptTemplate.fromMessages([
+  ["system", SYSTEM_PROMPT_TEMPLATE],
+  new MessagesPlaceholder("history"),
+  ["human", "{input}"]
+]);
+
+const chatChain = chatPrompt.pipe(chatModel);
+
+// Named 'ShopAI Chat' so LangSmith shows meaningful trace names
+const chainWithHistory = new RunnableWithMessageHistory({
+  runnable: chatChain,
+  getMessageHistory: getMessageHistory,
+  inputMessagesKey: "input",
+  historyMessagesKey: "history",
+  runName: "ShopAI Chat",
 });
 
 // Initialize Prisma
@@ -155,7 +190,7 @@ app.get('/api/products/search/:query', async (req, res) => {
 });
 
 
-// Chat API with Product Knowledge (RAG with Pinecone or Keyword Search)
+// Chat API with streaming (SSE)
 app.post('/api/chat', async (req, res) => {
   const userMessage = req.body?.message;
 
@@ -165,7 +200,7 @@ app.post('/api/chat', async (req, res) => {
 
   try {
     let relevantProducts = [];
-    const usePinecone = process.env.USE_PINECONE === 'true';
+    let usePinecone = process.env.USE_PINECONE === 'true';
 
     // Try Pinecone vector search first (if enabled and configured)
     if (usePinecone) {
@@ -174,11 +209,7 @@ app.post('/api/chat', async (req, res) => {
 
         if (isPineconeConfigured()) {
           console.log('🔍 Using Pinecone vector search');
-
-          // Search using vector similarity
           const searchResults = await searchProducts(userMessage, 5);
-
-          // Fetch full product details from database
           const productIds = searchResults.map(r => r.productId);
 
           if (productIds.length > 0) {
@@ -204,8 +235,18 @@ app.post('/api/chat', async (req, res) => {
     if (!usePinecone || relevantProducts.length === 0) {
       console.log('🔍 Using keyword search');
 
-      // Extract potential product-related keywords
-      const keywords = userMessage.toLowerCase().match(/\b\w+\b/g) || [];
+      // removeStopwords() uses the same English stop-word list as Elasticsearch/Algolia
+      const rawTokens = userMessage.toLowerCase().match(/\b\w+\b/g) || [];
+      // >= 2 keeps short but important product terms like 'tv', '4k', 'pc'
+      // single-char noise ('a', 'i') is already removed by removeStopwords()
+      const keywords = removeStopwords(rawTokens, eng).filter(w => w.length >= 2);
+
+      // Detect price intent — sort by price in the DB so the right products reach the AI
+      const wantsLowest = /lowest|cheap|budget|affordable|inexpensive|low.?price/i.test(userMessage);
+      const wantsHighest = /highest|expensive|premium|best|top.?of|maxx?|max.?price/i.test(userMessage);
+      const priceOrder = wantsLowest ? { price: 'asc' }
+        : wantsHighest ? { price: 'desc' }
+          : undefined;   // no price intent → natural DB order
 
       // Search for relevant products based on keywords
       if (keywords.length > 0) {
@@ -219,7 +260,8 @@ app.post('/api/chat', async (req, res) => {
               ]
             }))
           },
-          take: 5 // Limit to top 5 products
+          orderBy: priceOrder,  // ← sort by price when user expressed price preference
+          take: 5
         });
       }
     }
@@ -232,74 +274,71 @@ app.post('/api/chat', async (req, res) => {
       ).join('\n');
     }
 
-    const SYSTEM_PROMPT = `You are an AI shopping assistant for an e-commerce website.
-Your role is to help customers find products, answer questions about products, and provide recommendations.
-
-Guidelines:
-- Be friendly, helpful, and concise
-- If product information is available in the context, use it to answer questions
-- Provide specific product names, prices, and details when relevant
-- If asked about products not in the context, politely say you don't have that information
-- Suggest related products when appropriate
-- Format prices with dollar signs
-{productContext}`;
-
-    // Define the LangChain prompt template
-    const prompt = ChatPromptTemplate.fromMessages([
-      ["system", SYSTEM_PROMPT],
-      new MessagesPlaceholder("history"),
-      ["human", "{input}"]
-    ]);
-
-    // Create the runnable chain
-    const chain = prompt.pipe(chatModel);
-
-    // Wrap the chain with message history
-    const chainWithHistory = new RunnableWithMessageHistory({
-      runnable: chain,
-      getMessageHistory: getMessageHistory,
-      inputMessagesKey: "input",
-      historyMessagesKey: "history",
-    });
-
+    const topProducts = relevantProducts.slice(0, 3);
     const sessionId = req.headers['x-session-id'] || generateEventId();
-    
-    // Execute the chain with the session history
-    const response = await chainWithHistory.invoke(
+    const searchMethod = (usePinecone && relevantProducts.length > 0) ? 'vector' : 'keyword';
+
+    // ── Set SSE headers ──
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    // Send product cards immediately (before tokens arrive)
+    res.write(`data: ${JSON.stringify({ type: 'products', products: topProducts, searchMethod })}\n\n`);
+
+
+    // Stream LLM tokens
+    let fullReply = '';
+    const stream = await chainWithHistory.stream(
       {
         input: userMessage,
-        productContext: productContext // Passing contextual variables
+        productContext: productContext
       },
-      { configurable: { sessionId } }
+      {
+        configurable: { sessionId },
+        runName: `ShopAI Chat — ${userMessage.slice(0, 50)}`,
+        metadata: { searchMethod, productsFound: relevantProducts.length, sessionId },
+        tags: ['chat', searchMethod === 'vector' ? 'pinecone' : 'keyword']
+      }
     );
 
-    const reply = response.content || "No response";
+    for await (const chunk of stream) {
+      const token = chunk.content || '';
+      if (token) {
+        fullReply += token;
+        res.write(`data: ${JSON.stringify({ type: 'token', content: token })}\n\n`);
+      }
+    }
+
+    // Signal end of stream
+    res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+    res.end();
 
     // Track chat event to Kafka (async, non-blocking)
     const chatEvent = createChatEvent({
       userId: req.headers['x-user-id'] || 'anonymous',
-      sessionId: sessionId,
+      sessionId,
       message: userMessage,
-      response: reply,
+      response: fullReply,
       productsReturned: relevantProducts.map(p => p.id),
-      searchMethod: usePinecone && relevantProducts.length > 0 ? 'vector' : 'keyword'
+      searchMethod
     });
     kafkaProducer.publishEvent(Topics.CHAT_EVENTS, chatEvent).catch(err =>
       console.error('Failed to publish chat event:', err)
     );
 
-    // Return both the AI response and relevant products
-    res.json({
-      response: reply,
-      products: relevantProducts.slice(0, 3), // Send top 3 products to display
-      searchMethod: usePinecone && relevantProducts.length > 0 ? 'vector' : 'keyword'
-    });
-
   } catch (error) {
     console.error("Chat API error:", error);
-    res.status(500).json({ error: "Chat API call failed" });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Chat API call failed" });
+    } else {
+      res.write(`data: ${JSON.stringify({ type: 'error', message: 'Something went wrong' })}\n\n`);
+      res.end();
+    }
   }
 });
+
 
 
 // ============================================

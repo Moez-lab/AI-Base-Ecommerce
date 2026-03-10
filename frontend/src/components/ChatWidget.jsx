@@ -40,7 +40,6 @@ const ChatWidget = ({ userId, sessionId }) => {
     const sendMessage = async (text = inputText) => {
         if (!text.trim()) return;
 
-        // Add user message
         const newMessages = [...messages, { type: 'user', text }];
         setMessages(newMessages);
         setInputText('');
@@ -56,19 +55,54 @@ const ChatWidget = ({ userId, sessionId }) => {
                 },
                 body: JSON.stringify({ message: text })
             });
-            const data = await response.json();
 
-            setMessages(prev => [
-                ...prev,
-                { type: 'bot', text: data.response, products: data.products }
-            ]);
+            if (!response.ok) throw new Error('Network error');
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            // Add a blank streaming bot message
+            const botMsgIndex = newMessages.length;
+            setMessages(prev => [...prev, { type: 'bot', text: '', products: [] }]);
+            setIsLoading(false);
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // keep incomplete line in buffer
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const json = line.slice(6).trim();
+                    if (!json) continue;
+                    const event = JSON.parse(json);
+
+                    if (event.type === 'products') {
+                        setMessages(prev => prev.map((m, i) =>
+                            i === botMsgIndex ? { ...m, products: event.products } : m
+                        ));
+                    } else if (event.type === 'token') {
+                        setMessages(prev => prev.map((m, i) =>
+                            i === botMsgIndex ? { ...m, text: m.text + event.content } : m
+                        ));
+                    } else if (event.type === 'error') {
+                        setMessages(prev => prev.map((m, i) =>
+                            i === botMsgIndex ? { ...m, text: 'Sorry, something went wrong.' } : m
+                        ));
+                    }
+                    // 'done' event — stream finished, nothing extra needed
+                }
+            }
 
         } catch (error) {
-            setMessages(prev => [...prev, { type: 'bot', text: "Sorry, I encountered an error. Please try again." }]);
-        } finally {
             setIsLoading(false);
+            setMessages(prev => [...prev, { type: 'bot', text: "Sorry, I encountered an error. Please try again." }]);
         }
     };
+
 
     const handleKeyPress = (e) => {
         if (e.key === 'Enter') sendMessage();

@@ -46,7 +46,7 @@ async function setupPinecone() {
 
         await pinecone.createIndex({
             name: indexName,
-            dimension: 768, // Gemini text-embedding-004 dimension
+            dimension: 3072, // Gemini gemini-embedding-001 dimension
             metric: 'cosine',
             spec: {
                 serverless: {
@@ -83,7 +83,7 @@ async function setupPinecone() {
             console.log('✅ Index created successfully!');
             console.log(`\n📊 Index Details:`);
             console.log(`   Name: ${indexName}`);
-            console.log(`   Dimension: 768`);
+            console.log(`   Dimension: 3072`);
             console.log(`   Metric: cosine`);
             console.log(`   Cloud: AWS (us-east-1)`);
             console.log('\n🎉 Pinecone setup complete!');

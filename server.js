@@ -85,6 +85,28 @@ app.get('/api/products/search/:query', async (req, res) => {
     let productIds = [];
     let searchSource = 'keyword';
 
+    // Parse price constraint (e.g. under 300$, below 50, over 100)
+    let priceFilter = {};
+    const maxPriceMatch = query.match(/(?:under|below|less than|max|maximum)\s*\$?(\d+(?:\.\d+)?)/i) || 
+                          query.match(/\$?(\d+(?:\.\d+)?)\s*(?:or less|max|under)/i);
+    const minPriceMatch = query.match(/(?:over|above|more than|min|minimum)\s*\$?(\d+(?:\.\d+)?)/i) || 
+                          query.match(/\$?(\d+(?:\.\d+)?)\s*(?:or more|min|over)/i);
+
+    if (maxPriceMatch) {
+      const maxPrice = parseFloat(maxPriceMatch[1]);
+      if (!isNaN(maxPrice)) {
+        priceFilter.lte = maxPrice;
+        console.log(`💵 Parsed search maximum price constraint: $${maxPrice}`);
+      }
+    }
+    if (minPriceMatch) {
+      const minPrice = parseFloat(minPriceMatch[1]);
+      if (!isNaN(minPrice)) {
+        priceFilter.gte = minPrice;
+        console.log(`💵 Parsed search minimum price constraint: $${minPrice}`);
+      }
+    }
+
     // 1. Try Vector Search (if enabled)
     if (usePinecone) {
       try {
@@ -110,9 +132,14 @@ app.get('/api/products/search/:query', async (req, res) => {
     let products = [];
 
     if (searchSource === 'vector' && productIds.length > 0) {
-      // Fetch specific products from DB preserving order
+      // Fetch specific products from DB preserving order and matching price filters
+      const queryConditions = [{ id: { in: productIds } }];
+      if (Object.keys(priceFilter).length > 0) {
+        queryConditions.push({ price: priceFilter });
+      }
+      
       const fetchedProducts = await prisma.product.findMany({
-        where: { id: { in: productIds } }
+        where: { AND: queryConditions }
       });
 
       // Re-order based on vector score
@@ -122,18 +149,45 @@ app.get('/api/products/search/:query', async (req, res) => {
         .filter(p => p !== undefined); // Filter out any missing IDs
     }
 
-    // 3. Fallback to Keyword Search (if vector failed or found nothing)
+    // 3. Fallback to Keyword Search (if vector failed or found nothing/filtered out by price)
     if (products.length === 0) {
       console.log('🔤 Performing Keyword Search...');
       const lowerQuery = query.toLowerCase();
-      products = await prisma.product.findMany({
-        where: {
+
+      const searchConditions = [];
+      if (Object.keys(priceFilter).length > 0) {
+        searchConditions.push({ price: priceFilter });
+      }
+
+      // Extract keywords
+      const rawTokens = lowerQuery.match(/\b\w+\b/g) || [];
+      const keywords = removeStopwords(rawTokens, eng).filter(w => w.length >= 2);
+      const genericSearchWords = new Set(['show', 'find', 'get', 'something', 'items', 'products', 'me', 'under', 'below', 'above', 'more', 'less', 'than', 'price', 'cost', 'list', 'any', 'some', 'good', 'best', 'nice']);
+      const cleanKeywords = keywords.filter(w => !genericSearchWords.has(w) && isNaN(w));
+
+      if (cleanKeywords.length > 0) {
+        searchConditions.push({
+          OR: cleanKeywords.map(keyword => ({
+            OR: [
+              { name: { contains: keyword } },
+              { description: { contains: keyword } },
+              { category: { contains: keyword } }
+            ]
+          }))
+        });
+      } else if (searchConditions.length === 0) {
+        // Fallback to basic search if no price filter and no clean keywords
+        searchConditions.push({
           OR: [
-            { name: { contains: lowerQuery } }, // Case-insensitive handled by DB collation usually, or simple contains for SQLite
+            { name: { contains: lowerQuery } },
             { description: { contains: lowerQuery } },
             { category: { contains: lowerQuery } }
           ]
-        }
+        });
+      }
+
+      products = await prisma.product.findMany({
+        where: { AND: searchConditions }
       });
     }
 
@@ -172,6 +226,30 @@ app.post('/api/chat', async (req, res) => {
     const isCapability = /who are you|what can (you|u) do|your name/i.test(lower);
     const isSearchIntent = !isGreeting && !isThankYou && !isCapability;
 
+    // Parse price constraint (e.g. under 300$, below 50, over 100)
+    let priceFilter = {};
+    if (isSearchIntent) {
+      const maxPriceMatch = userMessage.match(/(?:under|below|less than|max|maximum)\s*\$?(\d+(?:\.\d+)?)/i) || 
+                            userMessage.match(/\$?(\d+(?:\.\d+)?)\s*(?:or less|max|under)/i);
+      const minPriceMatch = userMessage.match(/(?:over|above|more than|min|minimum)\s*\$?(\d+(?:\.\d+)?)/i) || 
+                            userMessage.match(/\$?(\d+(?:\.\d+)?)\s*(?:or more|min|over)/i);
+
+      if (maxPriceMatch) {
+        const maxPrice = parseFloat(maxPriceMatch[1]);
+        if (!isNaN(maxPrice)) {
+          priceFilter.lte = maxPrice;
+          console.log(`💵 Parsed maximum price constraint: $${maxPrice}`);
+        }
+      }
+      if (minPriceMatch) {
+        const minPrice = parseFloat(minPriceMatch[1]);
+        if (!isNaN(minPrice)) {
+          priceFilter.gte = minPrice;
+          console.log(`💵 Parsed minimum price constraint: $${minPrice}`);
+        }
+      }
+    }
+
     // Try Pinecone vector search first (if enabled and configured and user has search intent)
     if (usePinecone && isSearchIntent) {
       try {
@@ -183,8 +261,13 @@ app.post('/api/chat', async (req, res) => {
           const productIds = searchResults.map(r => r.productId);
 
           if (productIds.length > 0) {
+            const queryConditions = [{ id: { in: productIds } }];
+            if (Object.keys(priceFilter).length > 0) {
+              queryConditions.push({ price: priceFilter });
+            }
+            
             relevantProducts = await prisma.product.findMany({
-              where: { id: { in: productIds } }
+              where: { AND: queryConditions }
             });
 
             // Sort by Pinecone relevance score
@@ -201,7 +284,7 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
-    // Fallback to keyword search (if Pinecone disabled or failed, and user has search intent)
+    // Fallback to keyword search (if Pinecone disabled or failed, and user has search intent or vector results were empty/filtered out)
     if (isSearchIntent && (!usePinecone || relevantProducts.length === 0)) {
       console.log('🔍 Using keyword search');
 
@@ -218,22 +301,31 @@ app.post('/api/chat', async (req, res) => {
         : wantsHighest ? { price: 'desc' }
           : undefined;   // no price intent → natural DB order
 
-      // Search for relevant products based on keywords
-      if (keywords.length > 0) {
-        relevantProducts = await prisma.product.findMany({
-          where: {
-            OR: keywords.map(keyword => ({
-              OR: [
-                { name: { contains: keyword } },
-                { description: { contains: keyword } },
-                { category: { contains: keyword } }
-              ]
-            }))
-          },
-          orderBy: priceOrder,  // ← sort by price when user expressed price preference
-          take: 5
+      // Filter out generic verbs/adjectives and numbers from search keywords
+      const genericSearchWords = new Set(['show', 'find', 'get', 'something', 'items', 'products', 'me', 'under', 'below', 'above', 'more', 'less', 'than', 'price', 'cost', 'list', 'any', 'some', 'good', 'best', 'nice']);
+      const cleanKeywords = keywords.filter(w => !genericSearchWords.has(w) && isNaN(w));
+
+      const searchConditions = [];
+      if (Object.keys(priceFilter).length > 0) {
+        searchConditions.push({ price: priceFilter });
+      }
+      if (cleanKeywords.length > 0) {
+        searchConditions.push({
+          OR: cleanKeywords.map(keyword => ({
+            OR: [
+              { name: { contains: keyword } },
+              { description: { contains: keyword } },
+              { category: { contains: keyword } }
+            ]
+          }))
         });
       }
+
+      relevantProducts = await prisma.product.findMany({
+        where: searchConditions.length > 0 ? { AND: searchConditions } : {},
+        orderBy: priceOrder,
+        take: 5
+      });
     }
 
     // Build context from relevant products

@@ -10,7 +10,7 @@ const ChatWidget = ({ userId, sessionId }) => {
     const { addToCart } = useCart();
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState([
-        { type: 'bot', text: "Hi! I'm your shopping assistant. Looking for something specific today?" }
+        { type: 'bot', text: "Hi! I'm ShopAI, your shopping assistant. How can I help you today? You can search our products or choose an option below:", isWelcomeMessage: true }
     ]);
     const [inputText, setInputText] = useState('');
     const [isTooltipVisible, setIsTooltipVisible] = useState(true);
@@ -35,6 +35,92 @@ const ChatWidget = ({ userId, sessionId }) => {
     const closeTooltip = (e) => {
         e.stopPropagation();
         setIsTooltipVisible(false);
+    };
+
+    const handleQuickAction = async (actionType, label) => {
+        // Add user choice message to conversation
+        const newMessages = [...messages, { type: 'user', text: label }];
+        setMessages(newMessages);
+        setIsLoading(true);
+
+        try {
+            const apiUrl = import.meta.env.VITE_API_URL || '';
+            
+            if (actionType === 'deals') {
+                const response = await fetch(`${apiUrl}/api/recommendations/trending`);
+                if (!response.ok) throw new Error();
+                const data = await response.json();
+                const products = data.recommendations || [];
+
+                setMessages(prev => [...prev, {
+                    type: 'bot',
+                    text: products.length > 0 
+                        ? "Check out our hottest trending items right now! 🔥" 
+                        : "I couldn't retrieve the latest deals at the moment. Try searching for specific items!",
+                    products: products.slice(0, 3)
+                }]);
+            } else if (actionType === 'picks') {
+                const response = await fetch(`${apiUrl}/api/recommendations/personalized/${userId || 'guest'}`);
+                if (!response.ok) throw new Error();
+                const data = await response.json();
+                const products = data.recommendations || [];
+
+                setMessages(prev => [...prev, {
+                    type: 'bot',
+                    text: products.length > 0 
+                        ? "Here are some personalized picks just for you! ✨" 
+                        : "Here are some popular products from our catalog you might like! ✨",
+                    products: products.length > 0 ? products.slice(0, 3) : []
+                }]);
+
+                if (products.length === 0) {
+                    const allRes = await fetch(`${apiUrl}/api/products`);
+                    if (allRes.ok) {
+                        const allProd = await allRes.json();
+                        setMessages(prev => {
+                            const updated = [...prev];
+                            updated[updated.length - 1].products = allProd.slice(0, 3);
+                            return updated;
+                        });
+                    }
+                }
+            } else if (actionType === 'search') {
+                setMessages(prev => [...prev, {
+                    type: 'bot',
+                    text: "Select a category to browse:",
+                    isCategoryMenu: true
+                }]);
+            } else if (actionType === 'category') {
+                const response = await fetch(`${apiUrl}/api/products/search/${encodeURIComponent(label)}`);
+                if (!response.ok) throw new Error();
+                const data = await response.json();
+                const products = data.results || [];
+
+                setMessages(prev => [...prev, {
+                    type: 'bot',
+                    text: `Here are the top matches in **${label}**:`,
+                    products: products.slice(0, 3)
+                }]);
+            } else if (actionType === 'support') {
+                setMessages(prev => [...prev, {
+                    type: 'bot',
+                    text: `### 📋 ShopAI Help & FAQs\n\n` +
+                          `🚚 **Shipping Policy**:\n` +
+                          `- Free standard shipping on orders over $50.\n` +
+                          `- Orders are processed within 1-2 business days.\n\n` +
+                          `↩️ **Returns & Exchanges**:\n` +
+                          `- Easy returns within 30 days of purchase.\n` +
+                          `- Items must be in original condition.\n\n` +
+                          `💬 **Customer Support**:\n` +
+                          `- Email: support@shopai.com\n` +
+                          `- Hours: Mon-Fri 9 AM - 6 PM EST`
+                }]);
+            }
+        } catch (err) {
+            setMessages(prev => [...prev, { type: 'bot', text: "Sorry, I had trouble retrieving that information. Please try typing your search query in the chat!" }]);
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     const sendMessage = async (text = inputText) => {
@@ -133,8 +219,24 @@ const ChatWidget = ({ userId, sessionId }) => {
                         <div key={idx} className={`message ${msg.type}-message`}>
                             <div className="message-content">
                                 <div className="markdown-content">
-                                    {msg.type === 'bot' ? parse(DOMPurify.sanitize(marked.parse(msg.text || ''))) : msg.text}
+                                     {msg.type === 'bot' ? parse(DOMPurify.sanitize(marked.parse(msg.text || ''))) : msg.text}
                                 </div>
+                                {msg.isWelcomeMessage && (
+                                    <div className="quick-actions-grid">
+                                        <button onClick={() => handleQuickAction('search', '🔍 Browse Categories')} className="menu-action-btn">🔍 Browse Categories</button>
+                                        <button onClick={() => handleQuickAction('deals', '🔥 Hot Deals')} className="menu-action-btn">🔥 Hot Deals</button>
+                                        <button onClick={() => handleQuickAction('picks', '✨ Recommendations')} className="menu-action-btn">✨ Recommendations</button>
+                                        <button onClick={() => handleQuickAction('support', '❓ Customer Support')} className="menu-action-btn">❓ Help & FAQs</button>
+                                    </div>
+                                )}
+                                {msg.isCategoryMenu && (
+                                    <div className="category-menu">
+                                        <button onClick={() => handleQuickAction('category', 'Electronics')} className="suggestion-chip">💻 Electronics</button>
+                                        <button onClick={() => handleQuickAction('category', 'Fashion')} className="suggestion-chip">👕 Fashion</button>
+                                        <button onClick={() => handleQuickAction('category', 'Home')} className="suggestion-chip">🏡 Home</button>
+                                        <button onClick={() => handleQuickAction('category', 'Sports')} className="suggestion-chip">⚽ Sports</button>
+                                    </div>
+                                )}
                                 {msg.products && msg.products.length > 0 && (
                                     <div className="chat-products-container">
                                         {msg.products.map(product => (
@@ -176,17 +278,6 @@ const ChatWidget = ({ userId, sessionId }) => {
                         </div>
                     )}
                     <div ref={messagesEndRef} />
-
-                    {messages.length === 1 && (
-                        <div className="suggestions">
-                            <button className="suggestion-chip" onClick={() => sendMessage('Best laptops?')}>
-                                <Sparkles size={12} /> Best Laptops
-                            </button>
-                            <button className="suggestion-chip" onClick={() => sendMessage('Summer fashion')}>
-                                <Sparkles size={12} /> Summer Fashion
-                            </button>
-                        </div>
-                    )}
                 </div>
 
                 <div className="chat-input-area">

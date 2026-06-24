@@ -46,7 +46,7 @@ const Shop = () => {
 
     return (
         <main className="main-container" style={{ paddingTop: '80px' }}>
-            <button onClick={() => navigate(-1)} className="back-btn">
+            <button onClick={() => navigate('/')} className="back-btn">
                 <ArrowLeft size={20} /> Back
             </button>
             <div className="shop-header">

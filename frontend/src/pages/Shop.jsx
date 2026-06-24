@@ -13,10 +13,11 @@ const Shop = () => {
 
     useEffect(() => {
         setLoading(true);
-        let url = '/api/products';
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        let url = `${apiUrl}/api/products`;
 
         if (query) {
-            url = `/api/products/search/${encodeURIComponent(query)}`;
+            url = `${apiUrl}/api/products/search/${encodeURIComponent(query)}`;
         }
 
         fetch(url)

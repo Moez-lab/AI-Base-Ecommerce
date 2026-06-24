@@ -12,7 +12,8 @@ const ProductDetails = () => {
     const [error, setError] = useState(null);
 
     useEffect(() => {
-        fetch(`/api/products/${id}`)
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        fetch(`${apiUrl}/api/products/${id}`)
             .then(res => {
                 if (!res.ok) throw new Error('Product not found');
                 return res.json();

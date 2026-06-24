@@ -577,6 +577,19 @@ app.get('/api/recommendations/trending', async (req, res) => {
   }
 });
 
+const fs = require('fs');
+// Serve React frontend static files in production
+const frontendDistPath = path.join(__dirname, 'frontend/dist');
+if (fs.existsSync(frontendDistPath)) {
+  console.log(`📁 Serving frontend static files from: ${frontendDistPath}`);
+  app.use(express.static(frontendDistPath));
+  // Anything that doesn't match an API route, send back index.html (React Router)
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(frontendDistPath, 'index.html'));
+  });
+} else {
+  console.log(`⚠️ frontend/dist directory not found. Express will not serve static frontend files.`);
+}
 
 // Graceful shutdown
 process.on('SIGINT', async () => {

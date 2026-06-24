@@ -29,6 +29,7 @@
     "@pinecone-database/pinecone": "^6.1.4",
     "@prisma/client": "^5.22.0",
     "axios": "^1.13.4",
+    "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "groq-sdk": "^0.37.0",
@@ -43,3 +44,4 @@
     "prisma": "^5.22.0"
   }
 }
+

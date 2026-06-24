@@ -30,7 +30,7 @@ const getMessageHistory = (sessionId) => {
 };
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Initialize LangChain ChatGroq
 let chatModel = null;

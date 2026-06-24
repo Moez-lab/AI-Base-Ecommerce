@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const { removeStopwords, eng } = require('stopword');
 const Groq = require('groq-sdk');
 const { PrismaClient } = require('@prisma/client');
@@ -82,6 +83,18 @@ const prisma = new PrismaClient();
 const kafkaProducer = getProducer();
 
 app.use(express.json());
+
+// Enable CORS for frontend communication
+app.use(cors({
+  origin: [
+    'https://ai-base-ecommerce-frontend-production.up.railway.app',
+    'http://localhost:3000',
+    'http://localhost:5173'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'x-user-id', 'x-session-id']
+}));
 
 app.get('/', (req, res) => {
   res.json({ status: 'active', message: 'ShopAI Backend API is running' });
@@ -537,3 +550,4 @@ if (require.main === module) {
 }
 
 module.exports = app;
+

@@ -584,7 +584,7 @@ if (fs.existsSync(frontendDistPath)) {
   console.log(`📁 Serving frontend static files from: ${frontendDistPath}`);
   app.use(express.static(frontendDistPath));
   // Anything that doesn't match an API route, send back index.html (React Router)
-  app.get('*', (req, res) => {
+  app.get('/*splat', (req, res) => {
     res.sendFile(path.join(frontendDistPath, 'index.html'));
   });
 } else {

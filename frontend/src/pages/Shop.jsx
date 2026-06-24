@@ -68,7 +68,7 @@ const Shop = () => {
             </div>
 
             {/* Categories Pills */}
-            <section className="categories" style={{ display: 'flex', gap: '12px', overflowX: 'auto', padding: '8px 0 24px', scrollbarWidth: 'none' }}>
+            <section className="categories">
                 {['All', 'Fashion', 'Electronics', 'Home', 'Beauty', 'Sports'].map((cat) => {
                     const isActive = (!category && cat === 'All') || (category && category.toLowerCase() === cat.toLowerCase());
                     return (

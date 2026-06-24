@@ -14,67 +14,11 @@ const {
   getSimilarProducts
 } = require('./utils/recommendation-engine');
 
-// LangChain imports
-const { ChatGroq } = require("@langchain/groq");
-const { ChatPromptTemplate, MessagesPlaceholder } = require("@langchain/core/prompts");
-const { RunnableWithMessageHistory } = require("@langchain/core/runnables");
-const { InMemoryChatMessageHistory } = require("@langchain/core/chat_history");
-
-// In-memory chat history storage (mapped by sessionId)
-const chatHistories = {};
-
-const getMessageHistory = (sessionId) => {
-  if (chatHistories[sessionId] === undefined) {
-    chatHistories[sessionId] = new InMemoryChatMessageHistory();
-  }
-  return chatHistories[sessionId];
-};
+// Smart AI chat helper
+const { streamAIChatResponse } = require('./utils/ai-chat');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// Initialize LangChain ChatGroq
-let chatModel = null;
-let chatChain = null;
-let chainWithHistory = null;
-
-if (process.env.GROQ_API_KEY) {
-  chatModel = new ChatGroq({
-    apiKey: process.env.GROQ_API_KEY,
-    model: "llama-3.3-70b-versatile",
-    temperature: 0.7,
-    maxTokens: 512,   // cap output length for faster responses
-  });
-
-  const SYSTEM_PROMPT_TEMPLATE = `You are an AI shopping assistant for an e-commerce website.
-Your role is to help customers find products, answer questions about products, and provide recommendations.
-
-Guidelines:
-- Be friendly, helpful, and concise
-- If product information is available in the context, use it to answer questions
-- Provide specific product names, prices, and details when relevant
-- If asked about products not in the context, politely say you don't have that information
-- Suggest related products when appropriate
-- Format prices with dollar signs
-{productContext}`;
-
-  const chatPrompt = ChatPromptTemplate.fromMessages([
-    ["system", SYSTEM_PROMPT_TEMPLATE],
-    new MessagesPlaceholder("history"),
-    ["human", "{input}"]
-  ]);
-
-  chatChain = chatPrompt.pipe(chatModel);
-
-  // Named 'ShopAI Chat' so LangSmith shows meaningful trace names
-  chainWithHistory = new RunnableWithMessageHistory({
-    runnable: chatChain,
-    getMessageHistory: getMessageHistory,
-    inputMessagesKey: "input",
-    historyMessagesKey: "history",
-    runName: "ShopAI Chat",
-  });
-}
 
 // Initialize Prisma
 const prisma = new PrismaClient();
@@ -214,8 +158,9 @@ app.post('/api/chat', async (req, res) => {
   }
 
   try {
-    if (!chainWithHistory) {
-      return res.status(503).json({ error: 'AI Assistant is not configured on the server (Missing GROQ_API_KEY)' });
+    const hasKeys = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY;
+    if (!hasKeys) {
+      return res.status(503).json({ error: 'AI Assistant is not configured on the server. Please configure GROQ_API_KEY or GEMINI_API_KEY.' });
     }
 
     let relevantProducts = [];
@@ -306,46 +251,45 @@ app.post('/api/chat', async (req, res) => {
     // Send product cards immediately (before tokens arrive)
     res.write(`data: ${JSON.stringify({ type: 'products', products: topProducts, searchMethod })}\n\n`);
 
-
-    // Stream LLM tokens
-    let fullReply = '';
-    const stream = await chainWithHistory.stream(
-      {
-        input: userMessage,
-        productContext: productContext
-      },
-      {
-        configurable: { sessionId },
-        runName: `ShopAI Chat — ${userMessage.slice(0, 50)}`,
-        metadata: { searchMethod, productsFound: relevantProducts.length, sessionId },
-        tags: ['chat', searchMethod === 'vector' ? 'pinecone' : 'keyword']
-      }
-    );
-
-    for await (const chunk of stream) {
-      const token = chunk.content || '';
-      if (token) {
-        fullReply += token;
-        res.write(`data: ${JSON.stringify({ type: 'token', content: token })}\n\n`);
-      }
-    }
-
-    // Signal end of stream
-    res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
-    res.end();
-
-    // Track chat event to Kafka (async, non-blocking)
-    const chatEvent = createChatEvent({
-      userId: req.headers['x-user-id'] || 'anonymous',
-      sessionId,
+        const fullReply = await streamAIChatResponse({
       message: userMessage,
-      response: fullReply,
-      productsReturned: relevantProducts.map(p => p.id),
-      searchMethod
+      productContext,
+      sessionId,
+      relevantProducts,
+      onToken: (token) => {
+        res.write(`data: ${JSON.stringify({ type: 'token', content: token })}\n\n`);
+      },
+      onError: (err) => {
+        console.error('Error during streaming:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: err.message });
+        } else {
+          res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`);
+          res.end();
+        }
+      }
     });
-    kafkaProducer.publishEvent(Topics.CHAT_EVENTS, chatEvent).catch(err =>
-      console.error('Failed to publish chat event:', err)
-    );
+
+    if (fullReply) {
+      // Signal end of stream
+      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+      res.end();
+
+      // Track chat event to Kafka (async, non-blocking)
+      const chatEvent = createChatEvent({
+        userId: req.headers['x-user-id'] || 'anonymous',
+        sessionId,
+        message: userMessage,
+        response: fullReply,
+        productsReturned: relevantProducts.map(p => p.id),
+        searchMethod
+      });
+      kafkaProducer.publishEvent(Topics.CHAT_EVENTS, chatEvent).catch(err =>
+        console.error('Failed to publish chat event:', err)
+      );
+    } else {
+      res.end();
+    }
 
   } catch (error) {
     console.error("Chat API error:", error);

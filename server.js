@@ -166,8 +166,14 @@ app.post('/api/chat', async (req, res) => {
     let relevantProducts = [];
     let usePinecone = process.env.USE_PINECONE === 'true';
 
-    // Try Pinecone vector search first (if enabled and configured)
-    if (usePinecone) {
+    const lower = userMessage.toLowerCase().trim();
+    const isGreeting = /^(hi|hello|hey|hola|greetings|good morning|good afternoon|good evening|yo)\b/i.test(lower);
+    const isThankYou = /^(thanks|thank you|awesome|great|cool|ok|okay)\b/i.test(lower);
+    const isCapability = /who are you|what can (you|u) do|your name/i.test(lower);
+    const isSearchIntent = !isGreeting && !isThankYou && !isCapability;
+
+    // Try Pinecone vector search first (if enabled and configured and user has search intent)
+    if (usePinecone && isSearchIntent) {
       try {
         const { searchProducts, isPineconeConfigured } = require('./utils/pinecone');
 
@@ -191,12 +197,12 @@ app.post('/api/chat', async (req, res) => {
         }
       } catch (pineconeError) {
         console.error('⚠️  Pinecone error, falling back to keyword search:', pineconeError.message);
-        // Fall through to keyword search
+        usePinecone = false; // Fall through to keyword search
       }
     }
 
-    // Fallback to keyword search (if Pinecone disabled or failed)
-    if (!usePinecone || relevantProducts.length === 0) {
+    // Fallback to keyword search (if Pinecone disabled or failed, and user has search intent)
+    if (isSearchIntent && (!usePinecone || relevantProducts.length === 0)) {
       console.log('🔍 Using keyword search');
 
       // removeStopwords() uses the same English stop-word list as Elasticsearch/Algolia

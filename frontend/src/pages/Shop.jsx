@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import ProductGrid from '../components/ProductGrid';
-import { Search, Filter } from 'lucide-react';
+import { Search, Filter, ArrowLeft } from 'lucide-react';
 
 const Shop = () => {
+    const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const query = searchParams.get('q');
     const category = searchParams.get('cat');
@@ -45,6 +46,9 @@ const Shop = () => {
 
     return (
         <main className="main-container" style={{ paddingTop: '80px' }}>
+            <button onClick={() => navigate(-1)} className="back-btn">
+                <ArrowLeft size={20} /> Back
+            </button>
             <div className="shop-header">
                 {query ? (
                     <div>

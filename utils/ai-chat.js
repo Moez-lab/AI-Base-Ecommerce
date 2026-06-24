@@ -214,12 +214,21 @@ ${productContext}`;
     if (!success) {
       console.log('🤖 Routing chat request to local offline mock helper...');
       let mockReply = '';
-      if (relevantProducts && relevantProducts.length > 0) {
+      const lower = message.toLowerCase().trim();
+
+      // Heuristic responses
+      if (/^(hi|hello|hey|hola|greetings|good morning|good afternoon|good evening|yo)\b/i.test(lower)) {
+        mockReply = `Hello! How can I help you today? Feel free to search our product catalog by asking for items like laptops, headphones, shoes, or pillows.`;
+      } else if (/^(thanks|thank you|awesome|great|cool)\b/i.test(lower)) {
+        mockReply = `You're very welcome! Let me know if there's anything else I can help you find.`;
+      } else if (/who are you|what can you do|your name/i.test(lower)) {
+        mockReply = `I'm your ShopAI shopping assistant. I can help you search our product catalog, recommend matching products, and answer questions about item details.`;
+      } else if (relevantProducts && relevantProducts.length > 0) {
         mockReply = `I'm currently running in offline assistant mode. I found these matching products from our store catalog for you:\n\n` +
           relevantProducts.map(p => `- **${p.name}** ($${p.price}): ${p.description}`).join('\n') +
           `\n\nWhich of these would you like to know more about?`;
       } else {
-        mockReply = `I'm currently running in offline assistant mode. I couldn't find any direct matches in our catalog for your search, but you can try asking about specific items like Laptops, Wireless Headphones, or pillows!`;
+        mockReply = `I'm currently running in offline assistant mode. I couldn't find any direct matches in our catalog for your search. Try asking for specific items like Laptops, Wireless Headphones, or pillows!`;
       }
 
       // Stream the mock reply chunk by chunk to make it feel natural

@@ -218,17 +218,17 @@ ${productContext}`;
 
       // Heuristic responses
       if (/^(hi|hello|hey|hola|greetings|good morning|good afternoon|good evening|yo)\b/i.test(lower)) {
-        mockReply = `Hello! How can I help you today? Feel free to search our product catalog by asking for items like laptops, headphones, shoes, or pillows.`;
+        mockReply = `Hey there! 😊 Great to connect with you. How is your day going? Let me know if you are looking for anything specific, like laptops, comfy pillows, or headphones!`;
       } else if (/^(thanks|thank you|awesome|great|cool)\b/i.test(lower)) {
-        mockReply = `You're very welcome! Let me know if there's anything else I can help you find.`;
-      } else if (/who are you|what can you do|your name/i.test(lower)) {
-        mockReply = `I'm your ShopAI shopping assistant. I can help you search our product catalog, recommend matching products, and answer questions about item details.`;
+        mockReply = `Anytime! I'm always happy to help. Let me know if there's anything else you need!`;
+      } else if (/who are you|what can (you|u) do|your name/i.test(lower)) {
+        mockReply = `I'm ShopAI, your personal shopping assistant! 🛍️ I can help you search our store catalog, highlight hot deals, fetch personalized recommendations, or answer questions about shipping and returns. What's on your mind?`;
       } else if (relevantProducts && relevantProducts.length > 0) {
-        mockReply = `I'm currently running in offline assistant mode. I found these matching products from our store catalog for you:\n\n` +
+        mockReply = `I did a quick scan of our store catalog and found these great options for you:\n\n` +
           relevantProducts.map(p => `- **${p.name}** ($${p.price}): ${p.description}`).join('\n') +
-          `\n\nWhich of these would you like to know more about?`;
+          `\n\nWould you like me to tell you more about any of these?`;
       } else {
-        mockReply = `I'm currently running in offline assistant mode. I couldn't find any direct matches in our catalog for your search. Try asking for specific items like Laptops, Wireless Headphones, or pillows!`;
+        mockReply = `I took a look in our catalog but couldn't find a direct match for that. Try searching for other keywords like laptops, pillows, or shirts, and I'll see what I can find!`;
       }
 
       // Stream the mock reply chunk by chunk to make it feel natural

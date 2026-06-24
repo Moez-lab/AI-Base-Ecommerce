@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "postinstall": "prisma generate",
     "start": "node server.js",
     "dev": "node server.js",
     "pinecone:setup": "node scripts/setup-pinecone.js",

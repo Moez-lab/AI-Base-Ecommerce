@@ -523,7 +523,11 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ Server running at http://localhost:${PORT}`);
-  console.log(`📦 Database connected with ${prisma ? 'Prisma' : 'error'}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`✅ Server running at http://localhost:${PORT}`);
+    console.log(`📦 Database connected with ${prisma ? 'Prisma' : 'error'}`);
+  });
+}
+
+module.exports = app;

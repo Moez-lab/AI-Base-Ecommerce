@@ -33,18 +33,19 @@ const app = express();
 const PORT = 3000;
 
 // Initialize LangChain ChatGroq
-const chatModel = new ChatGroq({
-  apiKey: process.env.GROQ_API_KEY,
-  model: "llama-3.3-70b-versatile",
-  temperature: 0.7,
-  maxTokens: 512,   // cap output length for faster responses
-});
+let chatModel = null;
+let chatChain = null;
+let chainWithHistory = null;
 
-// removeStopwords (from 'stopword' package) handles filtering —
-// same curated English list as Elasticsearch/Algolia, no manual set needed
+if (process.env.GROQ_API_KEY) {
+  chatModel = new ChatGroq({
+    apiKey: process.env.GROQ_API_KEY,
+    model: "llama-3.3-70b-versatile",
+    temperature: 0.7,
+    maxTokens: 512,   // cap output length for faster responses
+  });
 
-// ── Build LangChain prompt + chain ONCE at startup (avoids per-request overhead) ──
-const SYSTEM_PROMPT_TEMPLATE = `You are an AI shopping assistant for an e-commerce website.
+  const SYSTEM_PROMPT_TEMPLATE = `You are an AI shopping assistant for an e-commerce website.
 Your role is to help customers find products, answer questions about products, and provide recommendations.
 
 Guidelines:
@@ -56,22 +57,23 @@ Guidelines:
 - Format prices with dollar signs
 {productContext}`;
 
-const chatPrompt = ChatPromptTemplate.fromMessages([
-  ["system", SYSTEM_PROMPT_TEMPLATE],
-  new MessagesPlaceholder("history"),
-  ["human", "{input}"]
-]);
+  const chatPrompt = ChatPromptTemplate.fromMessages([
+    ["system", SYSTEM_PROMPT_TEMPLATE],
+    new MessagesPlaceholder("history"),
+    ["human", "{input}"]
+  ]);
 
-const chatChain = chatPrompt.pipe(chatModel);
+  chatChain = chatPrompt.pipe(chatModel);
 
-// Named 'ShopAI Chat' so LangSmith shows meaningful trace names
-const chainWithHistory = new RunnableWithMessageHistory({
-  runnable: chatChain,
-  getMessageHistory: getMessageHistory,
-  inputMessagesKey: "input",
-  historyMessagesKey: "history",
-  runName: "ShopAI Chat",
-});
+  // Named 'ShopAI Chat' so LangSmith shows meaningful trace names
+  chainWithHistory = new RunnableWithMessageHistory({
+    runnable: chatChain,
+    getMessageHistory: getMessageHistory,
+    inputMessagesKey: "input",
+    historyMessagesKey: "history",
+    runName: "ShopAI Chat",
+  });
+}
 
 // Initialize Prisma
 const prisma = new PrismaClient();
@@ -199,6 +201,10 @@ app.post('/api/chat', async (req, res) => {
   }
 
   try {
+    if (!chainWithHistory) {
+      return res.status(503).json({ error: 'AI Assistant is not configured on the server (Missing GROQ_API_KEY)' });
+    }
+
     let relevantProducts = [];
     let usePinecone = process.env.USE_PINECONE === 'true';
 

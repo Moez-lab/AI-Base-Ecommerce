@@ -9,6 +9,7 @@ node_modules
 # Database
 *.db
 *.db-journal
+!dev.db
 prisma/migrations
 
 # Generated files

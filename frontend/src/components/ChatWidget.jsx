@@ -10,7 +10,7 @@ const ChatWidget = ({ userId, sessionId }) => {
     const { addToCart } = useCart();
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState([
-        { type: 'bot', text: "Hi! I'm ShopAI, your shopping assistant. How can I help you today? You can search our products or choose an option below:", isWelcomeMessage: true }
+        { type: 'bot', text: "Hi! I'm ShopAI, your shopping assistant. How can I help you today?" }
     ]);
     const [inputText, setInputText] = useState('');
     const [isTooltipVisible, setIsTooltipVisible] = useState(true);
@@ -221,14 +221,7 @@ const ChatWidget = ({ userId, sessionId }) => {
                                 <div className="markdown-content">
                                      {msg.type === 'bot' ? parse(DOMPurify.sanitize(marked.parse(msg.text || ''))) : msg.text}
                                 </div>
-                                {msg.isWelcomeMessage && (
-                                    <div className="quick-actions-grid">
-                                        <button onClick={() => handleQuickAction('search', '🔍 Browse Categories')} className="menu-action-btn">🔍 Browse Categories</button>
-                                        <button onClick={() => handleQuickAction('deals', '🔥 Hot Deals')} className="menu-action-btn">🔥 Hot Deals</button>
-                                        <button onClick={() => handleQuickAction('picks', '✨ Recommendations')} className="menu-action-btn">✨ Recommendations</button>
-                                        <button onClick={() => handleQuickAction('support', '❓ Customer Support')} className="menu-action-btn">❓ Help & FAQs</button>
-                                    </div>
-                                )}
+
                                 {msg.isCategoryMenu && (
                                     <div className="category-menu">
                                         <button onClick={() => handleQuickAction('category', 'Electronics')} className="suggestion-chip">💻 Electronics</button>

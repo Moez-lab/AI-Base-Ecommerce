@@ -12,6 +12,7 @@ import ProductDetails from './pages/ProductDetails';
 // Pages
 const Home = () => {
     const [products, setProducts] = useState([]);
+    const navigate = useNavigate();
 
     useEffect(() => {
         const apiUrl = import.meta.env.VITE_API_URL || '';
@@ -27,8 +28,18 @@ const Home = () => {
 
             {/* Categories */}
             <section className="categories">
-                {['All', 'Fashion', 'Electronics', 'Home', 'Beauty', 'Sports'].map((cat, i) => (
-                    <button key={cat} className={`cat-pill ${i === 0 ? 'active' : ''}`}>
+                {['All', 'Fashion', 'Electronics', 'Home', 'Beauty', 'Sports'].map((cat) => (
+                    <button 
+                        key={cat} 
+                        className={`cat-pill ${cat === 'All' ? 'active' : ''}`}
+                        onClick={() => {
+                            if (cat === 'All') {
+                                navigate('/shop');
+                            } else {
+                                navigate(`/shop?cat=${cat.toLowerCase()}`);
+                            }
+                        }}
+                    >
                         {cat}
                     </button>
                 ))}

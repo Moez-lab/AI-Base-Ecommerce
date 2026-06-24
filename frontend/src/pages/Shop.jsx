@@ -67,6 +67,28 @@ const Shop = () => {
                 <p>{products.length} items found</p>
             </div>
 
+            {/* Categories Pills */}
+            <section className="categories" style={{ display: 'flex', gap: '12px', overflowX: 'auto', padding: '8px 0 24px', scrollbarWidth: 'none' }}>
+                {['All', 'Fashion', 'Electronics', 'Home', 'Beauty', 'Sports'].map((cat) => {
+                    const isActive = (!category && cat === 'All') || (category && category.toLowerCase() === cat.toLowerCase());
+                    return (
+                        <button
+                            key={cat}
+                            className={`cat-pill ${isActive ? 'active' : ''}`}
+                            onClick={() => {
+                                if (cat === 'All') {
+                                    navigate('/shop');
+                                } else {
+                                    navigate(`/shop?cat=${cat.toLowerCase()}`);
+                                }
+                            }}
+                        >
+                            {cat}
+                        </button>
+                    );
+                })}
+            </section>
+
             {loading ? (
                 <div className="loading-grid">
                     {[1, 2, 3, 4].map(n => (

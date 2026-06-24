@@ -2,33 +2,49 @@ const { Pool } = require('pg');
 const { createClient } = require('redis');
 require('dotenv').config();
 
-// PostgreSQL connection pool
-const pool = new Pool({
-    host: process.env.POSTGRES_HOST || 'localhost',
-    port: process.env.POSTGRES_PORT || 5432,
-    user: process.env.POSTGRES_USER || 'postgres',
-    password: process.env.POSTGRES_PASSWORD || 'postgres',
-    database: process.env.POSTGRES_DB || 'recommendations',
-    max: 20,
-});
+// PostgreSQL connection pool — created lazily so missing Postgres doesn't crash startup
+let pool = null;
 
-// Redis client for caching
+function getPool() {
+    if (!pool) {
+        pool = new Pool({
+            host: process.env.POSTGRES_HOST || 'localhost',
+            port: process.env.POSTGRES_PORT || 5432,
+            user: process.env.POSTGRES_USER || 'postgres',
+            password: process.env.POSTGRES_PASSWORD || 'postgres',
+            database: process.env.POSTGRES_DB || 'recommendations',
+            max: 20,
+            connectionTimeoutMillis: 3000,
+        });
+    }
+    return pool;
+}
+
+// Redis client for caching — connected lazily
 let redisClient = null;
 
 async function getRedisClient() {
     if (!redisClient) {
-        redisClient = createClient({
-            socket: {
-                host: process.env.REDIS_HOST || 'localhost',
-                port: process.env.REDIS_PORT || 6379
-            }
-        });
+        try {
+            const client = createClient({
+                socket: {
+                    host: process.env.REDIS_HOST || 'localhost',
+                    port: process.env.REDIS_PORT || 6379,
+                    connectTimeout: 3000,
+                }
+            });
 
-        redisClient.on('error', (err) => console.error('Redis error:', err));
-        await redisClient.connect();
+            client.on('error', (err) => console.error('Redis error:', err));
+            await client.connect();
+            redisClient = client;
+        } catch (err) {
+            console.warn('⚠️  Redis unavailable, caching disabled:', err.message);
+            return null;
+        }
     }
     return redisClient;
 }
+
 
 /**
  * Get personalized recommendations for a user
@@ -43,7 +59,7 @@ async function getPersonalizedRecommendations(userId, limit = 10) {
         // Check cache first
         const redis = await getRedisClient();
         const cacheKey = `recommendations:user:${userId}`;
-        const cached = await redis.get(cacheKey);
+        const cached = redis ? await redis.get(cacheKey) : null;
 
         if (cached) {
             console.log(`✅ Cache hit for user ${userId}`);
@@ -51,7 +67,7 @@ async function getPersonalizedRecommendations(userId, limit = 10) {
         }
 
         // Get user's interaction history
-        const userHistory = await pool.query(`
+        const userHistory = await getPool().query(`
       SELECT product_id, 
              SUM(CASE 
                WHEN event_type = 'product.view' THEN 1
@@ -71,7 +87,7 @@ async function getPersonalizedRecommendations(userId, limit = 10) {
         }
 
         // Find similar users (collaborative filtering)
-        const similarUsers = await pool.query(`
+        const similarUsers = await getPool().query(`
       SELECT DISTINCT i2.user_id,
              COUNT(*) as common_products,
              SUM(CASE 
@@ -99,7 +115,7 @@ async function getPersonalizedRecommendations(userId, limit = 10) {
         const viewedProducts = userHistory.rows.map(r => r.product_id);
         const similarUserIds = similarUsers.rows.map(r => r.user_id);
 
-        const recommendations = await pool.query(`
+        const recommendations = await getPool().query(`
       SELECT i.product_id,
              p.product_name,
              p.category,
@@ -123,12 +139,12 @@ async function getPersonalizedRecommendations(userId, limit = 10) {
         const result = recommendations.rows;
 
         // Cache for 1 hour
-        await redis.setEx(cacheKey, 3600, JSON.stringify(result));
+        if (redis) await redis.setEx(cacheKey, 3600, JSON.stringify(result));
 
         return result;
     } catch (error) {
         console.error('Error getting personalized recommendations:', error);
-        return await getTrendingProducts(limit);
+        return [];
     }
 }
 
@@ -143,14 +159,14 @@ async function getFrequentlyViewedTogether(productId, limit = 5) {
     try {
         const redis = await getRedisClient();
         const cacheKey = `recommendations:product:${productId}`;
-        const cached = await redis.get(cacheKey);
+        const cached = redis ? await redis.get(cacheKey) : null;
 
         if (cached) {
             return JSON.parse(cached);
         }
 
         // Use materialized view for co-occurrence
-        const result = await pool.query(`
+        const result = await getPool().query(`
       SELECT 
         CASE 
           WHEN product_a = $1 THEN product_b
@@ -176,7 +192,7 @@ async function getFrequentlyViewedTogether(productId, limit = 5) {
         const recommendations = result.rows;
 
         // Cache for 6 hours
-        await redis.setEx(cacheKey, 21600, JSON.stringify(recommendations));
+        if (redis) await redis.setEx(cacheKey, 21600, JSON.stringify(recommendations));
 
         return recommendations;
     } catch (error) {
@@ -195,13 +211,13 @@ async function getTrendingProducts(limit = 10) {
     try {
         const redis = await getRedisClient();
         const cacheKey = 'recommendations:trending';
-        const cached = await redis.get(cacheKey);
+        const cached = redis ? await redis.get(cacheKey) : null;
 
         if (cached) {
             return JSON.parse(cached);
         }
 
-        const result = await pool.query(`
+        const result = await getPool().query(`
       SELECT product_id, product_name, category, price, 
              total_views, unique_viewers, total_clicks
       FROM mv_trending_products_24h
@@ -211,7 +227,7 @@ async function getTrendingProducts(limit = 10) {
         const trending = result.rows;
 
         // Cache for 15 minutes
-        await redis.setEx(cacheKey, 900, JSON.stringify(trending));
+        if (redis) await redis.setEx(cacheKey, 900, JSON.stringify(trending));
 
         return trending;
     } catch (error) {
@@ -230,7 +246,7 @@ async function getTrendingProducts(limit = 10) {
 async function getCategoryBasedRecommendations(userId, limit = 10) {
     try {
         // Get user's preferred categories
-        const categories = await pool.query(`
+        const categories = await getPool().query(`
       SELECT category, COUNT(*) as interaction_count
       FROM fact_user_interactions
       WHERE user_id = $1
@@ -246,7 +262,7 @@ async function getCategoryBasedRecommendations(userId, limit = 10) {
         const preferredCategories = categories.rows.map(r => r.category);
 
         // Get trending products in preferred categories
-        const result = await pool.query(`
+        const result = await getPool().query(`
       SELECT DISTINCT p.product_id, p.product_name, p.category, p.price,
              p.total_views, p.total_clicks
       FROM dim_products p
@@ -275,7 +291,7 @@ async function getCategoryBasedRecommendations(userId, limit = 10) {
 async function getSimilarProducts(productId, limit = 5) {
     try {
         // Get users who interacted with this product
-        const usersWhoLiked = await pool.query(`
+        const usersWhoLiked = await getPool().query(`
       SELECT DISTINCT user_id
       FROM fact_user_interactions
       WHERE product_id = $1
@@ -288,7 +304,7 @@ async function getSimilarProducts(productId, limit = 5) {
         const userIds = usersWhoLiked.rows.map(r => r.user_id);
 
         // Find products these users also liked
-        const result = await pool.query(`
+        const result = await getPool().query(`
       SELECT i.product_id,
              p.product_name,
              p.category,
@@ -323,9 +339,9 @@ async function refreshMaterializedViews() {
     try {
         console.log('🔄 Refreshing materialized views...');
 
-        await pool.query('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_trending_products_24h');
-        await pool.query('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_user_product_affinity');
-        await pool.query('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_product_cooccurrence');
+        await getPool().query('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_trending_products_24h');
+        await getPool().query('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_user_product_affinity');
+        await getPool().query('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_product_cooccurrence');
 
         console.log('✅ Materialized views refreshed');
     } catch (error) {
